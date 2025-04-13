@@ -25,70 +25,90 @@ serve(async (req) => {
 
     const { messages, mediaUrls = [] } = await req.json();
     
+    console.log("Processing request with messages:", JSON.stringify(messages));
+    console.log("Media URLs:", JSON.stringify(mediaUrls));
+    
     // Format content for Gemini API
-    const parts = [];
+    const contents = [];
     
-    // Add system prompt if it exists (the first message with role 'system')
-    const systemMessage = messages.find(m => m.role === 'system');
-    if (systemMessage) {
-      parts.push({ text: systemMessage.content });
-    }
-    
-    // Add user and assistant messages
-    const conversationMessages = messages.filter(m => m.role !== 'system');
-    for (const message of conversationMessages) {
+    // Convert messages to Gemini format
+    for (const message of messages) {
       if (message.role === 'user' || message.role === 'assistant') {
-        const part = { text: message.content };
-        parts.push(part);
+        contents.push({
+          role: message.role,
+          parts: [{ text: message.content }]
+        });
       }
     }
-    
-    // Add any media contents
+
+    // Prepare the media if it exists
+    let mediaContent = [];
     for (const url of mediaUrls) {
-      // For files stored in Supabase
-      if (url.startsWith('data:')) {
-        // Extract the base64 encoded image from the dataUrl
-        const base64Data = url.split(',')[1];
-        if (base64Data) {
-          parts.push({
-            inline_data: {
-              data: base64Data,
-              mime_type: url.split(';')[0].split(':')[1]
-            }
-          });
-        }
-      } else {
-        try {
-          // For external URLs
+      try {
+        if (url.startsWith('data:')) {
+          // Handle data URLs
+          const base64Data = url.split(',')[1];
+          if (base64Data) {
+            const mimeType = url.split(';')[0].split(':')[1];
+            mediaContent.push({
+              inline_data: {
+                data: base64Data,
+                mime_type: mimeType
+              }
+            });
+          }
+        } else {
+          // Handle direct URLs
           const response = await fetch(url);
+          if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
+          
           const contentType = response.headers.get('content-type');
           const arrayBuffer = await response.arrayBuffer();
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
           
-          parts.push({
+          mediaContent.push({
             inline_data: {
               data: base64,
               mime_type: contentType
             }
           });
-        } catch (error) {
-          console.error(`Failed to fetch media from ${url}:`, error);
         }
+      } catch (error) {
+        console.error(`Failed to process media from ${url}:`, error);
       }
     }
 
+    // If media exists, add it to the last user message
+    if (mediaContent.length > 0) {
+      // Find the most recent user message
+      const lastUserMessageIndex = [...contents].reverse().findIndex(c => c.role === 'user');
+      if (lastUserMessageIndex !== -1) {
+        const actualIndex = contents.length - 1 - lastUserMessageIndex;
+        // Add media to this message's parts
+        contents[actualIndex].parts = [
+          { text: contents[actualIndex].parts[0].text },
+          ...mediaContent
+        ];
+      } else {
+        // If no user message found, create a new one with just the media
+        contents.push({
+          role: 'user',
+          parts: mediaContent
+        });
+      }
+    }
+
+    console.log("Sending to Gemini API with contents:", JSON.stringify(contents));
+
     // Make request to Gemini API
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=${GEMINI_API_KEY}`, {
+    const apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent";
+    const response = await fetch(`${apiUrl}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: parts
-          }
-        ],
+        contents,
         generationConfig: {
           temperature: 0.7,
           topK: 40,
@@ -99,6 +119,7 @@ serve(async (req) => {
     });
 
     const data = await response.json();
+    console.log("Gemini API response:", JSON.stringify(data));
     
     let assistantResponse = "";
     if (data.candidates && data.candidates.length > 0 && 
@@ -108,9 +129,9 @@ serve(async (req) => {
       assistantResponse = data.candidates[0].content.parts[0].text;
     } else if (data.error) {
       console.error("Gemini API error:", data.error);
-      assistantResponse = "Sorry, I encountered an error processing your request.";
+      throw new Error(data.error.message || "Gemini API error");
     } else {
-      assistantResponse = "I'm not sure how to respond to that.";
+      throw new Error("Unexpected response format from Gemini API");
     }
 
     return new Response(JSON.stringify({ 
@@ -122,7 +143,8 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error in chat-gemini function:', error);
     return new Response(JSON.stringify({ 
-      error: error.message || "An unexpected error occurred" 
+      error: error.message || "An unexpected error occurred",
+      response: "I'm having trouble processing your request right now. Please try again later."
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
