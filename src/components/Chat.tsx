@@ -1,13 +1,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChatHeader } from "@/components/ChatHeader";
-import { ChatMessage, Message } from "@/types/chat";
+import { Message } from "@/types/chat";
 import { ChatInput } from "@/components/ChatInput";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { v4 as uuidv4 } from "uuid";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/components/ui/use-toast";
 import { MediaFile } from "@/types/chat";
+import { ChatMessage } from "@/components/ChatMessage";
 
 // Initialize storage bucket
 const initializeStorage = async () => {
