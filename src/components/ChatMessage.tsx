@@ -3,16 +3,10 @@ import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Avatar } from "@/components/ui/avatar";
 import { Bot, User } from "lucide-react";
-
-export interface Message {
-  id: string;
-  content: string;
-  role: "user" | "assistant";
-  timestamp: Date;
-}
+import { Message as MessageType } from "@/types/chat";
 
 interface ChatMessageProps {
-  message: Message;
+  message: MessageType;
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {
@@ -39,6 +33,45 @@ export function ChatMessage({ message }: ChatMessageProps) {
             : "bg-muted"
         )}
       >
+        {message.mediaUrls && message.mediaUrls.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {message.mediaUrls.map((url, index) => {
+              // Check media type based on URL or extension
+              const isImage = url.match(/\.(jpeg|jpg|gif|png|webp)$/i) || url.includes('/image/');
+              const isVideo = url.match(/\.(mp4|webm|ogg|mov)$/i) || url.includes('/video/');
+              const isPdf = url.match(/\.(pdf)$/i) || url.includes('/pdf');
+              
+              return (
+                <div key={index} className="rounded overflow-hidden max-w-xs">
+                  {isImage ? (
+                    <img src={url} alt="Attached content" className="max-h-40 object-contain" />
+                  ) : isVideo ? (
+                    <video 
+                      src={url} 
+                      controls 
+                      className="max-h-40" 
+                    />
+                  ) : isPdf ? (
+                    <div className="bg-background border rounded p-2 flex items-center gap-2">
+                      <span className="text-sm font-medium">PDF Document</span>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline">
+                        View
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="bg-background border rounded p-2 flex items-center gap-2">
+                      <span className="text-sm font-medium">Attached File</span>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline">
+                        Download
+                      </a>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        
         <div className="text-sm break-words whitespace-pre-wrap">
           {message.content}
         </div>
