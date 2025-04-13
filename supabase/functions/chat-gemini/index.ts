@@ -1,3 +1,4 @@
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.36.0";
 
@@ -9,6 +10,7 @@ const corsHeaders = {
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -17,7 +19,13 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(
+    // We'll use the service role key for storage access to bypass RLS
+    const supabaseAdmin = createClient(
+      SUPABASE_URL || '',
+      SUPABASE_SERVICE_ROLE_KEY || ''
+    );
+    
+    const supabaseClient = createClient(
       SUPABASE_URL || '',
       SUPABASE_ANON_KEY || ''
     );
@@ -57,8 +65,40 @@ serve(async (req) => {
             });
           }
         } else {
-          // Handle direct URLs
-          const response = await fetch(url);
+          // For Supabase storage URLs, we need to get the actual file
+          let response;
+          
+          if (url.includes('storage.googleapis.com') || url.includes('media-uploads')) {
+            // This is likely a Supabase Storage URL, try to fetch it with admin privileges
+            const path = url.split('/').pop();
+            if (path) {
+              const { data, error } = await supabaseAdmin.storage
+                .from('media-uploads')
+                .download(path);
+                
+              if (error) {
+                console.error(`Error downloading from storage: ${error.message}`);
+                throw error;
+              }
+              
+              // Convert the file to a base64 string
+              const arrayBuffer = await data.arrayBuffer();
+              const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+              
+              mediaContent.push({
+                inline_data: {
+                  data: base64,
+                  mime_type: data.type
+                }
+              });
+              
+              // Skip the regular fetch since we've already handled it
+              continue;
+            }
+          }
+          
+          // Handle other direct URLs
+          response = await fetch(url);
           if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
           
           const contentType = response.headers.get('content-type');
@@ -101,9 +141,8 @@ serve(async (req) => {
 
     let assistantResponse = "";
     
-    // Check if we have media content - if so, use gemini-1.5-flash for vision capabilities
-    // Otherwise use gemini-1.5-flash which is the newer text model
-    const modelToUse = mediaContent.length > 0 ? "gemini-1.5-flash" : "gemini-1.5-flash";
+    // Always use gemini-1.5-flash which supports both text and vision capabilities
+    const modelToUse = "gemini-1.5-flash";
     console.log(`Using model: ${modelToUse}`);
     
     // Make request to Gemini API

@@ -29,11 +29,22 @@ export function Chat() {
     },
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
     // Initialize storage bucket when component mounts
-    initializeStorage();
+    const setup = async () => {
+      try {
+        await initializeStorage();
+      } catch (error) {
+        console.error("Failed to initialize storage:", error);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+    
+    setup();
   }, []);
   
   const scrollToBottom = () => {
@@ -82,7 +93,13 @@ export function Chat() {
       });
       
       if (error) {
-        throw new Error(error.message);
+        console.error("Error from chat-gemini function:", error);
+        throw new Error(error.message || "Failed to get a response");
+      }
+      
+      if (!data || !data.response) {
+        console.error("Invalid response structure:", data);
+        throw new Error("Received an invalid response structure");
       }
       
       // Add AI message
@@ -96,9 +113,20 @@ export function Chat() {
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
       console.error("Failed to get response:", error);
+      
+      // Add error message to the chat
+      const errorMessage: Message = {
+        id: uuidv4(),
+        content: "I'm sorry, I couldn't process your request. Please try again.",
+        role: "assistant",
+        timestamp: new Date(),
+      };
+      
+      setMessages((prev) => [...prev, errorMessage]);
+      
       toast({
         title: "Error",
-        description: "Failed to get a response from the AI. Please try again.",
+        description: error.message || "Failed to get a response from the AI. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -121,7 +149,7 @@ export function Chat() {
       </div>
       
       <div className="border-t p-4">
-        <ChatInput onSend={handleSendMessage} disabled={isTyping} />
+        <ChatInput onSend={handleSendMessage} disabled={isTyping || isInitializing} />
       </div>
     </div>
   );

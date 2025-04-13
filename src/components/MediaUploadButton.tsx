@@ -23,15 +23,30 @@ export function MediaUploadButton({ onMediaSelect, disabled = false }: MediaUplo
     const mediaFiles: MediaFile[] = [];
     
     try {
+      // Check if bucket exists and create it if it doesn't
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const bucketExists = buckets?.some(bucket => bucket.name === 'media-uploads');
+      
+      if (!bucketExists) {
+        try {
+          // Try to create the bucket via the edge function
+          await supabase.functions.invoke('create-storage-bucket');
+          console.log("Created media-uploads bucket");
+        } catch (error) {
+          console.error("Error creating bucket:", error);
+          // Continue anyway as it might already exist
+        }
+      }
+      
       // Create array from FileList
       const fileArray = Array.from(files);
       
       for (const file of fileArray) {
         // Check file size
-        if (file.size > 5 * 1024 * 1024) { // 5MB
+        if (file.size > 10 * 1024 * 1024) { // 10MB
           toast({
             title: "File too large",
-            description: `${file.name} exceeds the 5MB limit.`,
+            description: `${file.name} exceeds the 10MB limit.`,
             variant: "destructive",
           });
           continue;
@@ -43,17 +58,46 @@ export function MediaUploadButton({ onMediaSelect, disabled = false }: MediaUplo
           preview = URL.createObjectURL(file);
         }
         
+        // First try with data URL if it's a small image file (under 500KB)
+        if (file.type.startsWith("image/") && file.size < 500 * 1024) {
+          try {
+            const reader = new FileReader();
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+            
+            mediaFiles.push({
+              url: dataUrl,
+              type: file.type,
+              preview,
+              name: file.name
+            });
+            
+            continue; // Skip Supabase upload for small images
+          } catch (error) {
+            console.error("Error creating data URL:", error);
+            // Fall back to Supabase upload
+          }
+        }
+        
         // Upload to Supabase
-        const fileName = `${Date.now()}-${file.name}`;
+        const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
         const { data, error } = await supabase.storage
           .from("media-uploads")
-          .upload(fileName, file);
+          .upload(fileName, file, {
+            cacheControl: '3600',
+            upsert: true
+          });
           
         if (error) {
           console.error("Upload error:", error);
+          
+          // Show user-friendly error
           toast({
             title: "Upload failed",
-            description: `Failed to upload ${file.name}.`,
+            description: `Failed to upload ${file.name}. ${error.message}`,
             variant: "destructive",
           });
           continue;
@@ -74,6 +118,10 @@ export function MediaUploadButton({ onMediaSelect, disabled = false }: MediaUplo
       
       if (mediaFiles.length > 0) {
         onMediaSelect(mediaFiles);
+        toast({
+          title: "Upload successful",
+          description: `${mediaFiles.length} file(s) uploaded successfully.`,
+        });
       }
     } catch (error) {
       console.error("Upload error:", error);

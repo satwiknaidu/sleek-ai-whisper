@@ -14,54 +14,66 @@ serve(async (req) => {
   }
 
   try {
+    // Use the service role key for admin operations
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') || '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
     );
 
     // Create the media-uploads bucket if it doesn't exist
-    const { data: buckets, error: bucketsError } = await supabase
-      .storage
-      .listBuckets();
-
-    if (bucketsError) {
-      throw bucketsError;
-    }
-
-    const bucketName = 'media-uploads';
-    if (!buckets.find(bucket => bucket.name === bucketName)) {
-      const { error } = await supabase
-        .storage
-        .createBucket(bucketName, {
-          public: true,
-          fileSizeLimit: 5242880, // 5MB
-        });
-
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(bucket => bucket.name === 'media-uploads');
+    
+    if (!bucketExists) {
+      const { data, error } = await supabase.storage.createBucket('media-uploads', {
+        public: true,
+        fileSizeLimit: 10485760, // 10MB
+        allowedMimeTypes: ['image/*', 'video/*', 'audio/*', 'application/pdf', 'text/plain'],
+      });
+      
       if (error) {
-        throw error;
+        throw new Error(`Failed to create bucket: ${error.message}`);
       }
-
-      // Set up public access policy for the bucket
-      const { error: policyError } = await supabase
-        .storage
-        .from(bucketName)
-        .createSignedUrl('dummy.txt', 60);
-
-      if (policyError && !policyError.message.includes('not found')) {
-        console.error("Error setting up policy:", policyError);
+      
+      console.log('Created media-uploads bucket:', data);
+      
+      // Create RLS policy to allow uploads for all users
+      const { error: policyError } = await supabase.rpc('create_storage_policy', {
+        bucket_name: 'media-uploads',
+        policy_name: 'allow_public_uploads',
+        definition: 'true',
+        operation: 'INSERT'
+      });
+      
+      if (policyError) {
+        console.error('Failed to create upload policy:', policyError);
+      }
+      
+      // Create RLS policy to allow downloads for all users
+      const { error: downloadPolicyError } = await supabase.rpc('create_storage_policy', {
+        bucket_name: 'media-uploads',
+        policy_name: 'allow_public_downloads',
+        definition: 'true',
+        operation: 'SELECT'
+      });
+      
+      if (downloadPolicyError) {
+        console.error('Failed to create download policy:', downloadPolicyError);
       }
     }
 
-    return new Response(JSON.stringify({
-      message: "Storage bucket configured successfully"
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: 'Storage bucket setup complete'
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
   } catch (error) {
     console.error('Error in create-storage-bucket function:', error);
-    return new Response(JSON.stringify({
-      error: error.message || "An unexpected error occurred"
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: error.message || 'Failed to setup storage bucket'
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
