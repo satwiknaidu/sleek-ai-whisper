@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.36.0";
 
@@ -100,8 +99,15 @@ serve(async (req) => {
 
     console.log("Sending to Gemini API with contents:", JSON.stringify(contents));
 
+    let assistantResponse = "";
+    
+    // Check if we have media content - if so, use gemini-1.5-flash for vision capabilities
+    // Otherwise use gemini-1.5-flash which is the newer text model
+    const modelToUse = mediaContent.length > 0 ? "gemini-1.5-flash" : "gemini-1.5-flash";
+    console.log(`Using model: ${modelToUse}`);
+    
     // Make request to Gemini API
-    const apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent";
+    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/${modelToUse}:generateContent`;
     const response = await fetch(`${apiUrl}?key=${GEMINI_API_KEY}`, {
       method: 'POST',
       headers: {
@@ -117,11 +123,10 @@ serve(async (req) => {
         }
       }),
     });
-
+    
     const data = await response.json();
     console.log("Gemini API response:", JSON.stringify(data));
     
-    let assistantResponse = "";
     if (data.candidates && data.candidates.length > 0 && 
         data.candidates[0].content && 
         data.candidates[0].content.parts && 
